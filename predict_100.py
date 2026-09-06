@@ -14,7 +14,7 @@ sample.to_csv(
     index=False
 )
 
-URL = "http://34.172.32.91/predict"
+URL = "http://136.114.170.234/predict"
 
 for _, row in sample.iterrows():
     if row.isna().any():

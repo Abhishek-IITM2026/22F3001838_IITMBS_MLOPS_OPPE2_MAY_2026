@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
       - name: heart-api
-        image: us-central1-docker.pkg.dev/project-32301d32-7dfb-43f1-b1a/iris-repo/heart-api:latest
+        image: us-central1-docker.pkg.dev/project-32301d32-7dfb-43f1-b1a/heart-repo/heart-api:latest
 
         ports:
         - containerPort: 8080
