@@ -1,0 +1,12 @@
+pandas
+numpy
+scikit-learn
+joblib
+fastapi
+uvicorn
+requests
+shap
+fairlearn
+google-cloud-logging
+scipy
+matplotlib

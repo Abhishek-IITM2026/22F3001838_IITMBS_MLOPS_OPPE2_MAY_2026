@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: heart-service
+
+spec:
+  selector:
+    app: heart-api
+
+  ports:
+    - port: 80
+      targetPort: 8080
+
+  type: LoadBalancer
