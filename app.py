@@ -4,14 +4,18 @@ import pandas as pd
 import joblib
 import logging
 
+import google.cloud.logging
+
+client = google.cloud.logging.Client()
+client.setup_logging()
+
+
+
 app = FastAPI()
 
 model = joblib.load("models/model.pkl")
 
-logging.basicConfig(
-    filename="predictions.log",
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 
 class HeartInput(BaseModel):
     age: int

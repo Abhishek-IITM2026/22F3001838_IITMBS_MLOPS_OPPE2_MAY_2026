@@ -1,23 +1,75 @@
-name: CI
+name: MLOps OPPE2 CI
 
 on:
   push:
     branches:
       - main
+  pull_request:
 
 jobs:
-  build:
-
+  verify:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-    - uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - run: pip install -r requirements.txt
+      - name: Verify Required Files
+        run: |
+          test -f train.py
+          test -f app.py
+          test -f fairness.py
+          test -f explainability.py
+          test -f drift.py
+          test -f Dockerfile
+          test -f deployment.yaml
+          test -f service.yaml
+          test -f hpa.yaml
 
-    - run: python train.py
+      - name: Train Model
+        run: |
+          mkdir -p models
+          python train.py
+
+      - name: Verify Model Created
+        run: |
+          test -f models/model.pkl
+
+      - name: Run Fairness Analysis
+        run: |
+          python fairness.py
+
+      - name: Run Explainability
+        run: |
+          python explainability.py
+
+      - name: Verify SHAP Output
+        run: |
+          test -f shap_summary.png
+
+      - name: Run Drift Detection
+        run: |
+          python drift.py
+
+      - name: Validate FastAPI App
+        run: |
+          python -m py_compile app.py
+
+      - name: Build Docker Image
+        run: |
+          docker build -t heart-api .
+
+      - name: Validate Kubernetes Manifests
+        run: |
+          grep "maxReplicas: 3" hpa.yaml
+          grep "LoadBalancer" service.yaml
