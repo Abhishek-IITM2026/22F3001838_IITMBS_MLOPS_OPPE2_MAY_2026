@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+  pull_request:
+    branches:
+      - main
+
 permissions:
   contents: read
   id-token: write
@@ -12,9 +16,10 @@ permissions:
 env:
   PROJECT_ID: project-32301d32-7dfb-43f1-b1a
   GAR_LOCATION: us-central1
-  GAR_REPOSITORY: iris-repo
+  GAR_REPOSITORY: heart-repo
   IMAGE_NAME: heart-api
-  CLUSTER_NAME: iris-cluster
+
+  CLUSTER_NAME: heart-cluster
   CLUSTER_LOCATION: us-central1-a
 
 jobs:
@@ -38,36 +43,50 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-    
-
-      - name: Explainability Test
-        run: |
-          python explainability.py
-
-  
-
-      - name: Fairness Test
-        run: |
-          python fairness.py
+      #################################################
+      # Train Model
+      #################################################
 
       - name: Train Model
         run: |
           mkdir -p models
           python train.py
 
-    
+      - name: Verify Model Artifact
+        run: |
+          ls -lh models/model.pkl
+
+      #################################################
+      # Deliverable 2 - Explainability
+      #################################################
+
+      - name: Explainability
+        run: |
+          python explainability.py
+
+      - name: Verify SHAP Output
+        run: |
+          ls -lh shap_summary.png
+
+      #################################################
+      # Deliverable 3 - Fairness
+      #################################################
+
+      - name: Fairness Testing
+        run: |
+          python fairness.py
+
+      #################################################
+      # Deliverable 7 - Drift Detection
+      #################################################
 
       - name: Drift Detection
         run: |
           python drift.py
 
-    
-
-      - name: Build Docker Image
-        run: |
-          docker build -t heart-api .
-
-     
+      #################################################
+      # Authenticate to GCP
+      #################################################
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -75,26 +94,30 @@ jobs:
           workload_identity_provider: projects/58620345939/locations/global/workloadIdentityPools/github-pool/providers/github-weekly-provider
           service_account: github-actions@project-32301d32-7dfb-43f1-b1a.iam.gserviceaccount.com
 
-      - name: Install gcloud
+      - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
+
+      #################################################
+      # Docker Build & Push
+      #################################################
 
       - name: Configure Docker
         run: |
           gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
-      
-
-      - name: Build Registry Image
+      - name: Build Docker Image
         run: |
           docker build \
-          -t us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} .
+            -t us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} .
 
-      - name: Push Image
+      - name: Push Docker Image
         run: |
           docker push \
-          us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-     
+      #################################################
+      # Deploy to GKE
+      #################################################
 
       - name: Get GKE Credentials
         uses: google-github-actions/get-gke-credentials@v2
@@ -105,9 +128,9 @@ jobs:
       - name: Update Deployment Image
         run: |
           kubectl set image deployment/heart-api \
-          heart-api=us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          heart-api=us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} || true
 
-      - name: Apply Kubernetes Files
+      - name: Apply Kubernetes Manifests
         run: |
           kubectl apply -f deployment.yaml
           kubectl apply -f service.yaml
@@ -115,10 +138,41 @@ jobs:
 
       - name: Wait For Rollout
         run: |
-          kubectl rollout status deployment/heart-api
+          kubectl rollout status deployment/heart-api --timeout=300s
+
+      #################################################
+      # Deployment Verification
+      #################################################
+
+      - name: Verify Pods
+        run: |
+          kubectl get pods -o wide
+
+      - name: Verify Services
+        run: |
+          kubectl get svc
+
+      - name: Verify HPA
+        run: |
+          kubectl get hpa
 
       - name: Verify Deployment
         run: |
-          kubectl get pods
-          kubectl get svc
-          kubectl get hpa
+          kubectl describe deployment heart-api
+
+      - name: Wait For External IP
+        run: |
+          for i in {1..30}; do
+            EXTERNAL_IP=$(kubectl get svc heart-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+            if [ -n "$EXTERNAL_IP" ]; then
+              echo "External IP: $EXTERNAL_IP"
+              exit 0
+            fi
+
+            echo "Waiting for External IP..."
+            sleep 10
+          done
+
+          echo "Timed out waiting for LoadBalancer IP"
+          exit 1
