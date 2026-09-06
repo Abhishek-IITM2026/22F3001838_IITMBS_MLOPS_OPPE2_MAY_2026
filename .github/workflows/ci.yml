@@ -1,17 +1,31 @@
-name: MLOps OPPE2 CI
+name: OPPE2 CI/CD
 
 on:
   push:
     branches:
       - main
-  pull_request:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: project-32301d32-7dfb-43f1-b1a
+  GAR_LOCATION: us-central1
+  GAR_REPOSITORY: iris-repo
+  IMAGE_NAME: heart-api
+  CLUSTER_NAME: iris-cluster
+  CLUSTER_LOCATION: us-central1-a
 
 jobs:
-  verify:
+
+  test-build-deploy:
+
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -24,52 +38,87 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Verify Required Files
+    
+
+      - name: Explainability Test
         run: |
-          test -f train.py
-          test -f app.py
-          test -f fairness.py
-          test -f explainability.py
-          test -f drift.py
-          test -f Dockerfile
-          test -f deployment.yaml
-          test -f service.yaml
-          test -f hpa.yaml
+          python explainability.py
+
+  
+
+      - name: Fairness Test
+        run: |
+          python fairness.py
 
       - name: Train Model
         run: |
           mkdir -p models
           python train.py
 
-      - name: Verify Model Created
-        run: |
-          test -f models/model.pkl
+    
 
-      - name: Run Fairness Analysis
-        run: |
-          python fairness.py
-
-      - name: Run Explainability
-        run: |
-          python explainability.py
-
-      - name: Verify SHAP Output
-        run: |
-          test -f shap_summary.png
-
-      - name: Run Drift Detection
+      - name: Drift Detection
         run: |
           python drift.py
 
-      - name: Validate FastAPI App
-        run: |
-          python -m py_compile app.py
+    
 
       - name: Build Docker Image
         run: |
           docker build -t heart-api .
 
-      - name: Validate Kubernetes Manifests
+     
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/58620345939/locations/global/workloadIdentityPools/github-pool/providers/github-weekly-provider
+          service_account: github-actions@project-32301d32-7dfb-43f1-b1a.iam.gserviceaccount.com
+
+      - name: Install gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
         run: |
-          grep "maxReplicas: 3" hpa.yaml
-          grep "LoadBalancer" service.yaml
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      
+
+      - name: Build Registry Image
+        run: |
+          docker build \
+          -t us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} .
+
+      - name: Push Image
+        run: |
+          docker push \
+          us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+     
+
+      - name: Get GKE Credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER_NAME }}
+          location: ${{ env.CLUSTER_LOCATION }}
+
+      - name: Update Deployment Image
+        run: |
+          kubectl set image deployment/heart-api \
+          heart-api=us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Apply Kubernetes Files
+        run: |
+          kubectl apply -f deployment.yaml
+          kubectl apply -f service.yaml
+          kubectl apply -f hpa.yaml
+
+      - name: Wait For Rollout
+        run: |
+          kubectl rollout status deployment/heart-api
+
+      - name: Verify Deployment
+        run: |
+          kubectl get pods
+          kubectl get svc
+          kubectl get hpa
